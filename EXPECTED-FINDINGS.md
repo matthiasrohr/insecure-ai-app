@@ -10,6 +10,12 @@ Classifications:
 - **DESIGN-WEAKNESS** — a missing control at the architecture level (no exploit instance on its own).
 - **STANDARD-VETTED counter-example** — intentionally safe; a scanner should NOT report it.
 
+A counter-example demonstrates **one specific control** (a tenant filter, an owner
+check, an egress allowlist). It is not a hardened application: no route in this app
+is authenticated, so any control keyed to a caller-supplied `user_id` scopes without
+enforcing. Rows below state per case what is and is not demonstrated. Where a control
+turned out to be bypassable it has been reclassified as a finding.
+
 Aligned to the OWASP Top 10 for LLM Applications and OWASP Agentic AI threats.
 
 ## Coverage matrix
@@ -42,7 +48,7 @@ OWASP Agentic AI — Threats and Mitigations:
 | T7 | Misaligned / Deceptive Behavior | yes (prompt conceals its own existence) |
 | T8 | Repudiation / Untraceability | yes (no audit log) |
 | T9 | Identity Spoofing | yes (`user_id`/`thread_id` from body) |
-| T10 | Overwhelming Human-in-the-Loop | yes (caller-bypassable approval) |
+| T10 | Overwhelming Human-in-the-Loop | yes (approval gate is inert in every configuration) |
 | T11 | Unexpected RCE / Code Attacks | yes (shell, eval, pickle) |
 | T12 | Agent Communication Poisoning | yes (coordinator -> worker relay) |
 | T13 | Rogue Agents | yes (unmonitored full-tool worker) |
@@ -58,7 +64,7 @@ OWASP Agentic AI — Threats and Mitigations:
 | CONFIRMED-EXPLOITABLE | `rag.index_document`, `api.add_document` | `POST /api/rag/documents` | Attacker seeds a poisoned document into the corpus, then triggers it via a normal query. |
 | CONFIRMED-EXPLOITABLE | `tools.DEFAULT_MANIFEST` (`lookup_order`), `graph._tool_catalog`, `api.write_manifest` | `POST /api/chat`, `POST /api/mcp/tools` | Tool-poisoning: the manifest description is loaded into the agent's system context every turn, so the poisoned `lookup_order` description drives an unrequested `read_file` of `../credentials.txt`. |
 | DESIGN-WEAKNESS | `graph.retrieve_node` | N/A | Retrieved untrusted text is concatenated into the `system` channel; no trust boundary between data and instructions. |
-| STANDARD-VETTED counter-example | `guarded.wrap_untrusted`, `guarded.GUARDED_SYSTEM_PROMPT`, `api.guarded_ask` | `GET /api/guarded/ask` | Untrusted context is fenced in `<untrusted_document>` and the prompt forbids treating it as instructions. |
+| STANDARD-VETTED counter-example | `api.guarded_ask`, `guarded.guarded_answer` | `GET /api/guarded/ask` | Safe, but **not** by the mechanism the fencing helpers suggest: `guarded_answer` never invokes a model, so there is no injection surface to defend. `guarded.wrap_untrusted` and `guarded.GUARDED_SYSTEM_PROMPT` are defined but unreferenced (dead code) — do not treat this endpoint as a working demonstration of prompt-level fencing. The fence would also be escapable if wired up: the closing tag is stripped in a single non-recursive pass, so `</untrusted_docu</untrusted_document>ment>` collapses into a valid terminator. |
 
 ## LLM02 — Sensitive Information Disclosure
 
@@ -68,13 +74,15 @@ OWASP Agentic AI — Threats and Mitigations:
 | CONFIRMED-EXPLOITABLE | `api.app_config` | `GET /api/config` | Internal API key, DB password and Stripe key returned in JSON. |
 | IMPLEMENTATION-WEAKNESS | `config.INTERNAL_API_KEY`, `config.DB_PASSWORD`, `config.STRIPE_KEY`, `config.SESSION_SIGNING_KEY` | N/A | Hardcoded secrets. |
 | DESIGN-WEAKNESS | `config.SYSTEM_PROMPT` | N/A | Secrets carried in-band in the prompt, so any injection leaks them. |
-| STANDARD-VETTED counter-example | `guarded.redact` | `GET /api/guarded/ask` | Output filter strips key/SSN patterns before returning. |
+| IMPLEMENTATION-WEAKNESS | `db.initialize` (`users.ssn`, `api_keys.token`) | `POST /api/tools/invoke` | SSNs and a live-format admin token (`acme-live-admin-ROOT-9931`) stored in plaintext, reachable via `sql_query` and via `lookup_order` (see LLM06). |
+| STANDARD-VETTED counter-example | `guarded.redact` | `GET /api/guarded/ask` | Output filter strips key/SSN patterns before returning. **Partial denylist, not a complete control:** it covers `INTERNAL_API_KEY` and `STRIPE_KEY`, but `DB_PASSWORD`, `SESSION_SIGNING_KEY` and the seeded DB tokens pass through unchanged. No end-to-end leak on the guarded path today, since only document text reaches it. |
 
 ## LLM03 — Supply Chain
 
 | Expected classification | Location | Endpoint | Notes |
 | --- | --- | --- | --- |
 | CONFIRMED-EXPLOITABLE | `tools.install_plugin`, `api.install_plugin` | `POST /api/plugins/install` | A tool manifest is fetched from a caller-supplied URL and trusted: no signature, no pinning, no provenance. Its descriptions then reach the model. |
+| CONFIRMED-EXPLOITABLE | `tools.REGISTRY` (`install_plugin`), `tools.DEFAULT_MANIFEST`, `graph._tool_catalog` | `POST /api/chat` | `install_plugin` is also registered as an *agent* tool and advertised in the manifest, so an injection can make the model install an attacker manifest itself. The new descriptions are reloaded into the tool catalog on every later turn, for every user: self-inflicted, persistent tool poisoning that outlives the session. |
 | DESIGN-WEAKNESS | `config.VERIFY_PLUGIN_SIGNATURES`, `requirements.txt` | N/A | Component verification switch is off; the poisoned manifest becomes the agent's tool source. |
 
 ## LLM04 — Data and Model Poisoning
@@ -101,8 +109,9 @@ OWASP Agentic AI — Threats and Mitigations:
 | CONFIRMED-EXPLOITABLE | `tools.read_file` | `POST /api/tools/invoke`, agent tool | Path traversal from `runtime/documents` (`../credentials.txt`). |
 | CONFIRMED-EXPLOITABLE | `tools.http_get` | `POST /api/tools/invoke`, agent tool | SSRF: arbitrary scheme/host; response fed back to the model. |
 | CONFIRMED-EXPLOITABLE | `tools.sql_query`, `db.natural_language_sql` | `POST /api/tools/invoke`, agent tool | Text-to-SQL executes model-authored statements verbatim. |
+| CONFIRMED-EXPLOITABLE | `tools.lookup_order` | `POST /api/tools/invoke`, agent tool | Distinct from the text-to-SQL sink above: a fixed, developer-written query with the parameter interpolated (`f"... WHERE id = {order_id}"`). Classic SQL injection (`1 OR 1=1 --`, `UNION SELECT` against `api_keys`), plus no owner check, so any order of any tenant is readable. |
 | CONFIRMED-EXPLOITABLE | `tools.send_email` | agent tool | Exfiltration sink: no recipient allowlist, no confirmation. |
-| CONFIRMED-EXPLOITABLE | `graph.approve_node`, `api.chat` (`approved`) | `POST /api/chat` | Human-in-the-loop gate is caller-controlled and off by default. |
+| CONFIRMED-EXPLOITABLE | `graph.approve_node`, `api.chat` (`approved`) | `POST /api/chat` | Human-in-the-loop gate is inert: **all three branches return `approved: True`**. With `REQUIRE_TOOL_APPROVAL=true` and `approved=false` it still proceeds and only appends a system note, and no graph edge halts before `tools_node`. The config switch is decorative — do not read the enabled state as a working control. |
 | CONFIRMED-EXPLOITABLE | `api.invoke_tool` | `POST /api/tools/invoke` | Direct tool invocation bypasses the agent and the approval node. |
 | DESIGN-WEAKNESS | `tools.DANGEROUS`, `config.MAX_AGENT_STEPS` | N/A | Over-broad tool surface; no least-privilege scoping; step cap is not a real budget. |
 | STANDARD-VETTED counter-example | `guarded.GUARDED_SYSTEM_PROMPT` | `GET /api/guarded/ask` | Read-only assistant with no tools (least agency). |
@@ -119,7 +128,7 @@ OWASP Agentic AI — Threats and Mitigations:
 | --- | --- | --- | --- |
 | CONFIRMED-EXPLOITABLE | `rag.search` (`ENFORCE_TENANT_ISOLATION` off) | `GET /api/rag/search`, `POST /api/chat` | `tenant` argument accepted and ignored; acme users retrieve the globex acquisition memo. |
 | DESIGN-WEAKNESS | `config.ENFORCE_TENANT_ISOLATION` | N/A | No tenant scoping in the retrieval layer. |
-| STANDARD-VETTED counter-example | `guarded.retrieve_for_tenant` | `GET /api/guarded/ask` | Retrieval filtered to the caller's tenant. |
+| STANDARD-VETTED counter-example | `guarded.retrieve_for_tenant` | `GET /api/guarded/ask` | Retrieval is filtered by `d.tenant == tenant`, which is the control being demonstrated. **It scopes but does not authenticate:** the tenant is derived from an unauthenticated `user_id` query parameter, so `?user_id=103` retrieves as globex and returns the `kb-200` acquisition memo. Read this row as "the filter is applied", not as tenant isolation. Same caveat for `GET /api/guarded/grounded`. |
 
 ## LLM09 — Misinformation (and T5 Cascading Hallucination)
 
@@ -135,6 +144,7 @@ OWASP Agentic AI — Threats and Mitigations:
 | Expected classification | Location | Endpoint | Notes |
 | --- | --- | --- | --- |
 | CONFIRMED-EXPLOITABLE | `api.agent_batch` | `POST /api/agent/batch` | Runs the agent an arbitrary number of times per request: no rate limit, no token/cost budget (model DoS / wallet drain). |
+| IMPLEMENTATION-WEAKNESS | `rag.index_document`, `rag.remember`, `rag.publish_web_page` | `POST /api/rag/documents`, `POST /api/web/pages`, `POST /api/chat` | A second consumption axis: unauthenticated writes append to unbounded in-memory lists with no size or count cap, and `rag.search` scans them linearly on every agent turn, so retrieval cost grows with the number of injected documents. |
 | DESIGN-WEAKNESS | `config.ENABLE_RATE_LIMIT`, `config.MAX_AGENT_STEPS`, `asgi.app` | N/A | No rate limiting on any route; the step cap is not a real budget. |
 | STANDARD-VETTED counter-example | `guarded.bounded_batch`, `api.guarded_batch` | `POST /api/guarded/batch` | Rejects work above a per-request budget (HTTP 429). |
 
@@ -150,7 +160,7 @@ OWASP Agentic AI — Threats and Mitigations:
 | Expected classification | Location | Endpoint | Notes |
 | --- | --- | --- | --- |
 | DESIGN-WEAKNESS | `tools._audit`, `config.ENABLE_AUDIT_LOG` | `POST /api/tools/invoke`, `POST /api/chat` | Tool executions are not recorded; there is no attributable trail of agent actions. |
-| STANDARD-VETTED counter-example | `guarded.audit`, `api.guarded_audit_log` | `GET /api/guarded/audit-log` | Guarded actions are written to an append-only, readable audit log. |
+| STANDARD-VETTED counter-example | `guarded.audit`, `api.guarded_audit_log` | `GET /api/guarded/audit-log` | An append-only, readable audit log exists and is written to. **Coverage is one endpoint only:** `api.guarded_grounded` calls `audit()`; `guarded/ask`, `guarded/fetch`, `guarded/orders` and `guarded/batch` record nothing. |
 
 ## Agentic — Memory, Identity and State
 
@@ -158,9 +168,11 @@ OWASP Agentic AI — Threats and Mitigations:
 | --- | --- | --- | --- |
 | CONFIRMED-EXPLOITABLE | `graph.get_thread`, `api.read_thread` | `GET /api/threads/{id}` | IDOR on agent conversations: any thread readable by id. |
 | CONFIRMED-EXPLOITABLE | `graph.run` (`thread_id`), `api.chat` | `POST /api/chat` | Checkpoints keyed by caller-chosen `thread_id`; no ownership check (session hijack / poisoning). |
+| CONFIRMED-EXPLOITABLE | `graph.dump_state`, `api.export_state` | `GET /api/agent/state/{thread_id}` | The export half: any thread's pickled agent state is returned base64-encoded, unauthenticated. Exfiltrates other users' conversation state, and hands the attacker a valid pickle to tamper with and feed back to the import route below. |
 | CONFIRMED-EXPLOITABLE | `graph.load_state`, `api.import_state` | `POST /api/agent/state/load` | Insecure deserialization of caller-supplied pickled agent state (RCE). |
 | CONFIRMED-EXPLOITABLE | `api.chat` (`user_id`) | `POST /api/chat` | Identity taken from the request body; caller impersonates any seeded user. |
-| STANDARD-VETTED counter-example | `guarded.guarded_orders`, `db.safe_orders_for_user` | `GET /api/guarded/orders`, `GET /api/orders/mine` | Owner check + parameterized query. |
+| CONFIRMED-EXPLOITABLE | `api.my_orders` | `GET /api/orders/mine` | Despite its "Parameterized and owner-scoped" docstring there is **no owner check at all**: `user_id` is an unauthenticated query parameter, so `?user_id=103` returns another tenant's orders. Same IDOR class the `api.chat` (`user_id`) row already confirms. |
+| STANDARD-VETTED counter-example | `guarded.guarded_orders`, `db.safe_orders_for_user` | `GET /api/guarded/orders` | Parameterized query plus an explicit owner check — those two controls are real and are what this row demonstrates. **The check is tautological**, because `user_id` and `owner_id` both come from the same anonymous caller (`?user_id=102&owner_id=102` succeeds). It shows the shape of an owner check, not enforced access control. |
 
 ## Web and Transport Policy
 
@@ -168,4 +180,4 @@ OWASP Agentic AI — Threats and Mitigations:
 | --- | --- | --- | --- |
 | CONFIRMED-EXPLOITABLE | `asgi.CORSMiddleware` | N/A | Reflects any origin and allows credentials. |
 | DESIGN-WEAKNESS | `asgi.app` | N/A | No authentication, rate limiting, or CSRF protection on any route. |
-| STANDARD-VETTED counter-example | `guarded.guarded_fetch`, `api.guarded_fetch` | `GET /api/guarded/fetch` | Egress allowlist: HTTPS-only, host allowlist, redirects disabled. |
+| CONFIRMED-EXPLOITABLE | `guarded.guarded_fetch`, `api.guarded_fetch` | `GET /api/guarded/fetch` | **Intended as a counter-example, but the host allowlist is bypassable — treat it as an SSRF finding, not as vetted.** Parser differential: the guard reads the host with `urlparse().hostname`, the request is issued by `requests`/`urllib3`, and the two disagree on a backslash in the authority. For `https://evil.example\@docs.acme.example/`, `urlparse` yields `docs.acme.example` (allowed) while `urllib3` connects to `evil.example`. The HTTPS-only check and `allow_redirects=False` do hold; the host check does not. |

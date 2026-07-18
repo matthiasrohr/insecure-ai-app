@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>ACME Copilot (insecure test target)</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 820px; margin: 2rem auto; }
+      #log { border: 1px solid #ccc; padding: 1rem; min-height: 18rem; }
+      .user { color: #05529c; }
+      .bot { color: #222; }
+      .tool { color: #a05000; font-family: monospace; font-size: .85rem; }
+      input, select, button { font-size: 1rem; padding: .4rem; }
+      #row { display: flex; gap: .5rem; margin-top: .75rem; }
+      #msg { flex: 1; }
+      .warn { background: #ffe9e9; border-left: 4px solid #c00; padding: .6rem; }
+    </style>
+  </head>
+  <body>
+    <h1>ACME Copilot</h1>
+    <p class="warn">
+      Intentionally vulnerable test target. Do not deploy, expose, or use real data.
+    </p>
+
+    <div id="log"></div>
+
+    <div id="row">
+      <select id="user">
+        <option value="100">alice (acme)</option>
+        <option value="101">bob (acme)</option>
+        <option value="102">admin (acme)</option>
+        <option value="103">carol (globex)</option>
+      </select>
+      <input id="thread" value="t-1" size="8" title="thread_id" />
+      <input id="msg" placeholder="Ask about invoices, expenses, orders…" />
+      <button onclick="send()">Send</button>
+    </div>
+
+    <script>
+      const log = document.getElementById("log");
+
+      function append(cls, text) {
+        const div = document.createElement("div");
+        div.className = cls;
+        // Model output is rendered as HTML. Anything the model was talked into
+        // emitting -- including markup from a retrieved document -- executes here.
+        div.innerHTML = text;
+        log.appendChild(div);
+      }
+
+      async function send() {
+        const msg = document.getElementById("msg").value;
+        document.getElementById("msg").value = "";
+        append("user", "<b>you:</b> " + msg);
+
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            message: msg,
+            thread_id: document.getElementById("thread").value,
+            user_id: parseInt(document.getElementById("user").value, 10),
+          }),
+        });
+        const data = await res.json();
+
+        for (const step of data.trace) {
+          if (step.tool_calls && step.tool_calls.length) {
+            append("tool", "→ tool: " + JSON.stringify(step.tool_calls));
+          } else if (step.type === "tool") {
+            append("tool", "← result: " + step.content);
+          }
+        }
+        append("bot", "<b>copilot:</b> " + data.reply);
+      }
+
+      document.getElementById("msg").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") send();
+      });
+    </script>
+  </body>
+</html>

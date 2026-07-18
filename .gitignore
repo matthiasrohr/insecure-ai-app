@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+runtime/app.db
+runtime/credentials.txt
+runtime/mcp_tools.json
+runtime/outbox/*.eml
+runtime/documents/*.txt
+runtime/audit.log
+runtime/guarded_audit.log
+runtime/evil_manifest.json

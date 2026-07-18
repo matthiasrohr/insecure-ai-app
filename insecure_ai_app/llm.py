@@ -88,18 +88,21 @@ def _anthropic_invoke(messages: list[BaseMessage]) -> AIMessage:
     import anthropic  # optional dependency
 
     client = anthropic.Anthropic()
-    system = config.SYSTEM_PROMPT
+    # The graph already supplies SYSTEM_PROMPT as a system message; prepending
+    # it again would send it twice.
+    system_parts = []
     payload = []
     for msg in messages:
         if msg.type == "system":
             # Retrieved documents are pushed into the system channel on purpose.
-            system += "\n\n" + str(msg.content)
+            system_parts.append(str(msg.content))
         elif msg.type == "human":
             payload.append({"role": "user", "content": str(msg.content)})
         elif msg.type == "tool":
             payload.append({"role": "user", "content": f"TOOL RESULT: {msg.content}"})
         elif msg.type == "ai" and msg.content:
             payload.append({"role": "assistant", "content": str(msg.content)})
+    system = "\n\n".join(system_parts) or config.SYSTEM_PROMPT
     if not payload:
         payload = [{"role": "user", "content": "hello"}]
 

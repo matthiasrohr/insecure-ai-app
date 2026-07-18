@@ -1,0 +1,5 @@
+# Extra dependency for LLM_PROVIDER=local (see README).
+# Installed via `make install-local`, which adds the prebuilt CPU wheel index:
+#   --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+# Without that index pip has no wheel on PyPI and would build from source.
+llama-cpp-python==0.3.34

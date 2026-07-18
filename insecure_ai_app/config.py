@@ -29,8 +29,23 @@ SESSION_SIGNING_KEY = "change-me"
 # "mock" runs fully offline with a deterministic, naively-instruction-following
 # fake model so every exploit is reproducible without an API key.
 # "anthropic" calls the real Messages API (requires `pip install anthropic`).
+# "local" runs a small GGUF model on CPU -- offline, no key, but a real model
+# (requires `make install-local`; see README for which exploits it reproduces).
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "mock")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
+
+# --- Local model -------------------------------------------------------------
+# Repo, file and revision are pinned so the demo stays reproducible.
+MODELS_DIR = RUNTIME_DIR / "models"
+LOCAL_MODEL_REPO = "Qwen/Qwen2.5-1.5B-Instruct-GGUF"
+LOCAL_MODEL_FILE = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+LOCAL_MODEL_REVISION = "91cad51170dc346986eccefdc2dd33a9da36ead9"
+LOCAL_MODEL_SHA256 = "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e"
+LOCAL_MODEL_BYTES = 1117320736
+LOCAL_MODEL_PATH = MODELS_DIR / LOCAL_MODEL_FILE
+LOCAL_MODEL_URL = (
+    f"https://huggingface.co/{LOCAL_MODEL_REPO}/resolve/{LOCAL_MODEL_REVISION}/{LOCAL_MODEL_FILE}"
+)
 
 # --- Guardrail switches (all disabled on purpose) ----------------------------
 REQUIRE_TOOL_APPROVAL = os.environ.get("REQUIRE_TOOL_APPROVAL", "false").lower() == "true"

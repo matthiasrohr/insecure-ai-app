@@ -10,3 +10,4 @@ runtime/documents/*.txt
 runtime/audit.log
 runtime/guarded_audit.log
 runtime/evil_manifest.json
+runtime/models/

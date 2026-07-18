@@ -11,3 +11,33 @@ runtime/audit.log
 runtime/guarded_audit.log
 runtime/evil_manifest.json
 runtime/models/
+
+# Python build/packaging
+build/
+dist/
+*.egg-info/
+
+# Environment / secrets
+.env
+.env.*
+
+# Editors & IDEs
+.idea
+.vscode
+
+# Local tooling config
+.claude/
+.mcp.json
+.ripgreprc
+
+# Shell dotfiles that live in this directory
+.bashrc
+.bash_profile
+.profile
+.zshrc
+.zprofile
+.gitconfig
+
+# OS cruft
+.DS_Store
+Thumbs.db
